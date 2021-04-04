@@ -3,19 +3,17 @@ pragma solidity ^0.5.0;
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v2.5.0/contracts/token/ERC20/ERC20.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v2.5.0/contracts/token/ERC20/ERC20Detailed.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v2.5.0/contracts/math/SafeMath.sol";
-
-
 import "./Oracle1.sol";
-
-//Allows interaction with other ERC20 tokens; will be useful for handing FT.
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v2.5.0/contracts/token/ERC20/IERC20.sol";
+import "./BT.sol";
 
 contract ST is ERC20, ERC20Detailed{
     Oracle private oracle;
-    uint public value;
+    BT public bt;
+    // uint private constant minPriceBT = 50000000000000000;
     
     constructor(address _oracle) public ERC20Detailed("StableToken", "ST", 18) {
     oracle = Oracle(_oracle);
+    bt = BT(new BT());
     }
     
     //TODO: Remove this function when testing on live network - useful for localVM testing.
@@ -33,21 +31,38 @@ contract ST is ERC20, ERC20Detailed{
     
     function burn(uint _value) public{
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        value = SafeMath.div(SafeMath.mul(_value,1000000000000000000), currentPrice);
+        uint value = SafeMath.div(SafeMath.mul(_value,1000000000000000000), currentPrice);
+        //Requires a minimum collateral of 100% to allow burning.
+        require((getVaultValue() - value) >= (totalSupply() - _value), 'Min collateral ratio of 100% violated.');
         _burn(msg.sender,_value);
         msg.sender.transfer(value);
     }
     
-    
-    //Functions responsible for handling changes to supply of FT:
-    function deposit(address _to) public payable{
-        
+    //TODO: Fix deposit maths.
+    function deposit(address _to) public payable returns(uint _totalBT){
+        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
+        uint value = SafeMath.mul(currentPrice,SafeMath.div(msg.value,1000000000000000000));
+        uint buffer = getVaultValue() - totalSupply();
+        uint bt_value = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
+        bt.mint(_to,value/bt_value);
+        return(bt.totalSupply());
     }
     
     function withdraw(uint _value) public {
-        
+        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
+        uint buffer = getVaultValue() - totalSupply();
+        uint bt_value = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
+        uint value = ((_value * bt_value)*1000000000000000000)/ currentPrice;
+        require((getVaultValue() - value) >= totalSupply(), 'Min collateral ratio of 100% violated'); 
+        bt.burn(msg.sender, _value);
+        msg.sender.transfer(value);
     }
     
+    function getVaultValue() internal view returns (uint _value){
+        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
+        uint vaultValue = SafeMath.mul(SafeMath.div(currentPrice,1000000000000000000),address(this).balance);
+        return(vaultValue);
+    }
 
     //Oracilize safeParseInt function to parse string into uint
     function safeParseInt(string memory _a, uint _b) internal pure returns (uint _parsedInt) {
