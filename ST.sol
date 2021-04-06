@@ -7,9 +7,9 @@ import "./Oracle1.sol";
 import "./BT.sol";
 
 contract ST is ERC20, ERC20Detailed{
+    using SafeMath for uint;
     Oracle private oracle;
     BT public bt;
-    // uint private constant minPriceBT = 50000000000000000;
     
     constructor(address _oracle) public ERC20Detailed("StableToken", "ST", 18) {
     oracle = Oracle(_oracle);
@@ -25,42 +25,48 @@ contract ST is ERC20, ERC20Detailed{
     function mint(address _to) public payable{
         //Parse as uint with 18 decimal places because msg.value is expressed in terms of wei which has 18dp
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint _value = SafeMath.mul(currentPrice,SafeMath.div(msg.value,1000000000000000000));
-        _mint(_to, _value);
+        uint value = currentPrice.mul(msg.value.div(1000000000000000000));
+        _mint(_to, value);
     }
     
     function burn(uint _value) public{
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint value = SafeMath.div(SafeMath.mul(_value,1000000000000000000), currentPrice);
+        uint value = _value.mul(1000000000000000000).div(currentPrice);
         //Requires a minimum collateral of 100% to allow burning.
         require((getVaultValue() - value) >= (totalSupply() - _value), 'Min collateral ratio of 100% violated.');
         _burn(msg.sender,_value);
         msg.sender.transfer(value);
     }
     
-    //TODO: Fix deposit maths.
+    
     function deposit(address _to) public payable returns(uint _totalBT){
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint value = SafeMath.mul(currentPrice,SafeMath.div(msg.value,1000000000000000000));
-        uint buffer = getVaultValue() - totalSupply();
-        uint bt_value = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
-        bt.mint(_to,value/bt_value);
+        uint value = currentPrice.mul(msg.value.div(1000000000000000000));
+        //Balance of address is increased before code executed...
+        uint buffer = getVaultValue() - msg.value - totalSupply();
+        uint btUnitPrice = bt.totalSupply()>0 ? buffer.div(bt.totalSupply()): 1;
+        bt.mint(_to,value.div(btUnitPrice));
         return(bt.totalSupply());
     }
     
     function withdraw(uint _value) public {
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint buffer = getVaultValue() - totalSupply();
-        uint bt_value = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
-        uint value = ((_value * bt_value)*1000000000000000000)/ currentPrice;
+        uint btUnitPrice = unitPriceBT();
+        uint value = ((_value * btUnitPrice)*1000000000000000000)/ currentPrice;
         require((getVaultValue() - value) >= totalSupply(), 'Min collateral ratio of 100% violated'); 
         bt.burn(msg.sender, _value);
         msg.sender.transfer(value);
     }
     
+    function unitPriceBT() public view returns (uint _unitPrice){
+        uint buffer = getVaultValue() - totalSupply();
+        uint btUnitPrice = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
+        return btUnitPrice;
+    }
+    
     function getVaultValue() internal view returns (uint _value){
         uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint vaultValue = SafeMath.mul(SafeMath.div(currentPrice,1000000000000000000),address(this).balance);
+        uint vaultValue = currentPrice.div(1000000000000000000).mul(address(this).balance);
         return(vaultValue);
     }
 
