@@ -16,16 +16,12 @@ contract ST is ERC20, ERC20Detailed{
     Oracle private oracle; //The oracle which provides pricing data.
     //TODO: Change to private when deploying on live network.
     BT public bt; //Instance of BT Contract responsible for ERC-20 compliant backing token, owned by this contract.
-    uint constant private DECIMALFIX = 1000000000000000000; //10^18, used in pricing arithmetic.
+    uint constant private WAD = 10 ** 18; //10^18, used in pricing arithmetic.
+    uint public vault;
     
     constructor(address _oracle) public ERC20Detailed("StableToken", "ST", 18) {
     oracle = Oracle(_oracle); //Update the oracle and load into interface.
     bt = BT(new BT()); //Deploy a new BT contract.
-    }
-    
-    //TODO: Remove this function when deploying on live network - useful for localVM testing.
-    function checkBalance() public view returns(uint){
-        return address(this).balance;
     }
     
     /**
@@ -34,10 +30,9 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the minting was successful or not
     */
     function mint(address _to) public payable returns(bool success){
-        //Parse as uint with 18 decimal places because msg.value is expressed in terms of wei which has 18dp
-        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint value = currentPrice.mul(msg.value.div(DECIMALFIX));
+        uint value = ETH_TO_ST(msg.value);
         _mint(_to, value);
+        vault += msg.value;
         return true;
     }
     /**
@@ -46,12 +41,15 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the burning was successful or not
     */
     function burn(uint _value) public returns (bool success){
-        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint value = _value.mul(DECIMALFIX).div(currentPrice);
+        uint value = ST_TO_ETH(_value);
         //Requires a minimum collateral of 100% to allow burning.
+        require(getVaultValue() >= value, "Not enough collateral to cover burn.");
+        
+        //TODO: Fix the ratio value.
         require((getVaultValue() - value) >= (totalSupply() - _value), 'Min collateral ratio of 100% violated.');
         _burn(msg.sender,_value);
         msg.sender.transfer(value);
+        vault -= value;
         return true;
     }
     /**
@@ -60,12 +58,9 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the deposit was successful or not
     */
     function deposit(address _to) public payable returns(bool success){
-        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint value = currentPrice.mul(msg.value.div(DECIMALFIX));
         //Balance of address is increased before code executed...
-        uint buffer = getVaultValue() - msg.value - totalSupply();
-        uint btUnitPrice = bt.totalSupply()>0 ? buffer.div(bt.totalSupply()): 1;
-        bt.mint(_to,value.div(btUnitPrice));
+        bt.mint(_to, ETH_TO_BT(msg.value));
+        vault += msg.value;
         return true;
     }
     /**
@@ -74,32 +69,70 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the deposit was successful or not
     */
     function withdraw(uint _value) public returns (bool success){
-        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint btUnitPrice = unitPriceBT();
-        uint value = ((_value * btUnitPrice)*DECIMALFIX)/ currentPrice;
+        uint value = BT_TO_ETH(_value);
+        //TODO: Fix ratio.
         require((getVaultValue() - value) >= totalSupply(), 'Min collateral ratio of 100% violated'); 
         bt.burn(msg.sender, _value);
         msg.sender.transfer(value);
+        vault -= value;
         return true;
     }
-    /**
-    * @notice calculates the value of 1 BT token in GBP based on the current buffer value and supply of BT tokens.
-    * @return Current £ value of 1 BT token.
-    */
-    function unitPriceBT() public view returns (uint _unitPrice){
-        uint buffer = getVaultValue() - totalSupply();
-        uint btUnitPrice = bt.totalSupply()>0 ? buffer / bt.totalSupply() : 1;
-        return btUnitPrice;
-    }
+
     /**
     * @notice calculates the combined value of the ETH being stored int he vault, based on current ETH price.
     * @return Current £ value of the vault. (How much collateral is being held).
     */
     function getVaultValue() internal view returns (uint _value){
-        uint currentPrice = safeParseInt(oracle.ETHGBP(),18);
-        uint vaultValue = currentPrice.div(DECIMALFIX).mul(address(this).balance);
+        uint vaultValue = ETHGBP().div(WAD).mul(vault);
         return(vaultValue);
     }
+    /**
+    * @notice calculates the value of the buffer, taking into consideration a new deposit of value `_addition`
+    * @return The buffer which is used to calculate the value of BT.
+    */
+    function getBufferValue() public view returns (int _buffer){
+        int buffer = int(getVaultValue()) - int(totalSupply());
+        return buffer;
+    }
+
+    function ETHGBP() public view returns (uint _price){
+       return(safeParseInt(oracle.ETHGBP(),18));
+
+    }
+    //TODO: Helper functions for converting ETH->ST, ST->ETH, FT-> ETH and ETH -> FT....
+    function ETH_TO_ST(uint _eth) public view returns (uint _ST) {
+        uint mintValue = ETHGBP().mul(_eth.div(WAD));
+        return mintValue;
+    }
+    function ST_TO_ETH(uint _st) public view returns (uint _ETH) {
+        uint burnValue = _st.mul(WAD).div(ETHGBP());
+        return burnValue;
+    }
+    function ETH_TO_BT(uint _eth) public view returns (uint _BT) {
+        int buffer = getBufferValue();
+        uint depositValue = ETHGBP().mul(_eth.div(WAD));
+        uint btUnitPrice = 0;
+        if (bt.totalSupply() ==0 ){
+            btUnitPrice = WAD;
+        } else{
+            //TODO: Change the way pricing determined if negative buffer.
+            btUnitPrice = buffer > 0 ? uint(buffer).mul(WAD).div(bt.totalSupply()) : WAD;
+        }
+        return depositValue.mul(WAD).div(btUnitPrice);
+    }
+    function BT_TO_ETH(uint _bt) public view returns (uint _ETH) {
+        int buffer = getBufferValue();
+        uint btUnitPrice;
+        if (bt.totalSupply() ==0 ){
+            btUnitPrice = WAD;
+        } else{
+            //TODO: Change the way pricing determined if negative buffer.
+            btUnitPrice = buffer > 0 ? uint(buffer).mul(WAD).div(bt.totalSupply()) : WAD;
+        }
+        uint value = ((_bt * btUnitPrice))/ ETHGBP();
+        return value;
+    }
+
 
     //Oracilize safeParseInt function to parse string into uint
     function safeParseInt(string memory _a, uint _b) internal pure returns (uint _parsedInt) {
