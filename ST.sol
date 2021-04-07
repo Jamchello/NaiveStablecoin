@@ -18,6 +18,8 @@ contract ST is ERC20, ERC20Detailed{
     BT public bt; //Instance of BT Contract responsible for ERC-20 compliant backing token, owned by this contract.
     uint constant private WAD = 10 ** 18; //10^18, used in pricing arithmetic.
     uint public vault;
+    //120% Minimum collateral %
+    uint minimumCollateral = 12 * (10**17);
     
     constructor(address _oracle) public ERC20Detailed("StableToken", "ST", 18) {
     oracle = Oracle(_oracle); //Update the oracle and load into interface.
@@ -42,11 +44,9 @@ contract ST is ERC20, ERC20Detailed{
     */
     function burn(uint _value) public returns (bool success){
         uint value = ST_TO_ETH(_value);
-        //Requires a minimum collateral of 100% to allow burning.
-        require(getVaultValue() >= value, "Not enough collateral to cover burn.");
-        
+        require(getVaultValue() >= _value, "Not enough collateral to cover burn.");
         //TODO: Fix the ratio value.
-        require((getVaultValue() - value) >= (totalSupply() - _value), 'Min collateral ratio of 100% violated.');
+        require(newCollateralRatio(_value) >= minimumCollateral, 'Min collateral ratio of 120% violated.');
         _burn(msg.sender,_value);
         msg.sender.transfer(value);
         vault -= value;
@@ -71,7 +71,8 @@ contract ST is ERC20, ERC20Detailed{
     function withdraw(uint _value) public returns (bool success){
         uint value = BT_TO_ETH(_value);
         //TODO: Fix ratio.
-        require((getVaultValue() - value) >= totalSupply(), 'Min collateral ratio of 100% violated'); 
+        require(getBufferValue() >0, 'No collateral to cover withdrawal');
+        require(newCollateralRatio(ETH_TO_ST(value)) >= minimumCollateral, 'Min collateral ratio of 120% violated'); 
         bt.burn(msg.sender, _value);
         msg.sender.transfer(value);
         vault -= value;
@@ -97,18 +98,17 @@ contract ST is ERC20, ERC20Detailed{
 
     function ETHGBP() public view returns (uint _price){
        return(safeParseInt(oracle.ETHGBP(),18));
-
     }
-    //TODO: Helper functions for converting ETH->ST, ST->ETH, FT-> ETH and ETH -> FT....
-    function ETH_TO_ST(uint _eth) public view returns (uint _ST) {
+
+    function ETH_TO_ST(uint _eth) internal view returns (uint _ST) {
         uint mintValue = ETHGBP().mul(_eth.div(WAD));
         return mintValue;
     }
-    function ST_TO_ETH(uint _st) public view returns (uint _ETH) {
+    function ST_TO_ETH(uint _st) internal view returns (uint _ETH) {
         uint burnValue = _st.mul(WAD).div(ETHGBP());
         return burnValue;
     }
-    function ETH_TO_BT(uint _eth) public view returns (uint _BT) {
+    function ETH_TO_BT(uint _eth) internal view returns (uint _BT) {
         int buffer = getBufferValue();
         uint depositValue = ETHGBP().mul(_eth.div(WAD));
         uint btUnitPrice = 0;
@@ -120,7 +120,7 @@ contract ST is ERC20, ERC20Detailed{
         }
         return depositValue.mul(WAD).div(btUnitPrice);
     }
-    function BT_TO_ETH(uint _bt) public view returns (uint _ETH) {
+    function BT_TO_ETH(uint _bt) internal view returns (uint _ETH) {
         int buffer = getBufferValue();
         uint btUnitPrice;
         if (bt.totalSupply() ==0 ){
@@ -133,7 +133,15 @@ contract ST is ERC20, ERC20Detailed{
         return value;
     }
 
+    function newCollateralRatio(uint _burning) public view returns(uint _ratio){
+        uint ratio = totalSupply()  != _burning && totalSupply() != 0 ? (getVaultValue().sub(_burning)).mul(WAD).div(totalSupply() - _burning) : minimumCollateral;
+        return (ratio);
+    }  
 
+    function collateralRatio() public view returns (uint _ratio){
+        uint ratio = totalSupply() != 0 ? (getVaultValue().mul(WAD)).div(totalSupply()) : minimumCollateral;
+        return(ratio);
+    }
     //Oracilize safeParseInt function to parse string into uint
     function safeParseInt(string memory _a, uint _b) internal pure returns (uint _parsedInt) {
         bytes memory bresult = bytes(_a);
