@@ -154,7 +154,7 @@ contract ST is ERC20, ERC20Detailed{
             btUnitPrice = WAD;
         } else{
             //TODO: Change the way pricing determined if negative buffer.
-            btUnitPrice = calcBT();
+            btUnitPrice = unitPriceBT();
         }
         uint value = ((_bt * btUnitPrice))/ ETHGBP();
         return value;
@@ -180,7 +180,7 @@ contract ST is ERC20, ERC20Detailed{
     * @notice calculates the unit price of a single BT token.
     * @return the pricing of 1 BT token.
     */
-    function calcBT() internal view returns (uint _price){
+    function unitPriceBT() public view returns (uint _price){
         uint btUnitPrice = 0;
         int buffer = getBufferValue();
         uint minimumPrice = minPriceBT();
