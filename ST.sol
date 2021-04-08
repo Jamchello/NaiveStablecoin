@@ -10,17 +10,19 @@ import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v2.5.0/contr
 //Local file import of contracts: Mock Oracle (Oracle) and Backing Token (BT).
 import "./Oracle1.sol";
 import "./BT.sol";
+import './oraclizeAPI_0.5.sol';
 
 contract ST is ERC20, ERC20Detailed{
     using SafeMath for uint;
     Oracle private oracle; //The oracle which provides pricing data.
-    //TODO: Change to private when deploying on live network.
+
     BT public bt; //Instance of BT Contract responsible for ERC-20 compliant backing token, owned by this contract.
     uint constant private WAD = 10 ** 18; //10^18, used in pricing arithmetic.
-    uint public vault;
-    //120% Minimum collateral %
-    uint minimumCollateral = 12 * (10**17);
-    
+    uint private vault; //Stores the ammount of collateral held by the contract... used instead of this(address).balance because the vault value needs to be used in calculations without inclusion of payments included with deposit calls.
+    uint minCollatRatio = 12 * (10**17); //120% Minimum collateral %
+    uint mintFee = 2*(10**16); //2% Minting fee
+    uint burnFee = 5*(10**16); //5% Burning fee
+        
     constructor(address _oracle) public ERC20Detailed("StableToken", "ST", 18) {
     oracle = Oracle(_oracle); //Update the oracle and load into interface.
     bt = BT(new BT()); //Deploy a new BT contract.
@@ -32,7 +34,10 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the minting was successful or not
     */
     function mint(address _to) public payable returns(bool success){
-        uint value = ETH_TO_ST(msg.value);
+        //TODO: Fix the collateralisation calculations to meet new req of up-front deposit.
+        require(vault != 0, 'Requires Initial deposit to build up collateral.');
+        //Taking the mint fee into consideration by: (100%-fee%) * £ value of the funds sent into function. Essentially rewarding the fee% of deposit into the buffer immediately. 
+        uint value = ((WAD.sub(mintFee)).mul(ETH_TO_ST(msg.value))).div(WAD);
         _mint(_to, value);
         vault += msg.value;
         return true;
@@ -43,10 +48,11 @@ contract ST is ERC20, ERC20Detailed{
     * @return Whether the burning was successful or not
     */
     function burn(uint _value) public returns (bool success){
-        uint value = ST_TO_ETH(_value);
+        //Taking the burn fee into consideration by: (100%-fee%) * (£ value of the tokens being burned) Essentially rewarding the fee% of tokens into buffer immediately.
+        uint value = ((WAD.sub(burnFee)).mul(ST_TO_ETH(_value))).div(WAD);
         require(getVaultValue() >= _value, "Not enough collateral to cover burn.");
         //TODO: Fix the ratio value.
-        require(newCollateralRatio(_value) >= minimumCollateral, 'Min collateral ratio of 120% violated.');
+        require(newCollateralRatio(_value) >= minCollatRatio, 'Min collateral ratio of 120% violated.');
         _burn(msg.sender,_value);
         msg.sender.transfer(value);
         vault -= value;
@@ -72,7 +78,7 @@ contract ST is ERC20, ERC20Detailed{
         uint value = BT_TO_ETH(_value);
         //TODO: Fix ratio.
         require(getBufferValue() >0, 'No collateral to cover withdrawal');
-        require(newCollateralRatio(ETH_TO_ST(value)) >= minimumCollateral, 'Min collateral ratio of 120% violated'); 
+        require(newCollateralRatio(ETH_TO_ST(value)) >= minCollatRatio, 'Min collateral ratio of 120% violated'); 
         bt.burn(msg.sender, _value);
         msg.sender.transfer(value);
         vault -= value;
@@ -88,26 +94,43 @@ contract ST is ERC20, ERC20Detailed{
         return(vaultValue);
     }
     /**
-    * @notice calculates the value of the buffer, taking into consideration a new deposit of value `_addition`
+    * @notice calculates the value of the buffer.
     * @return The buffer which is used to calculate the value of BT.
     */
-    function getBufferValue() public view returns (int _buffer){
+    function getBufferValue() internal view returns (int _buffer){
         int buffer = int(getVaultValue()) - int(totalSupply());
         return buffer;
     }
-
-    function ETHGBP() public view returns (uint _price){
-       return(safeParseInt(oracle.ETHGBP(),18));
+    /**
+    * @notice Makes a call to the Oracle to fetch the latest GBP pricing of 1 ETH
+    * @return Current price of 1 ETH in GBP.
+    */
+    function ETHGBP() internal view returns (uint _price){
+       return(usingOraclize.safeParseInt(oracle.ETHGBP(),18));
     }
-
+    /**
+    * @notice Calculates the £ value of an Ethereum transaction of value `_eth`.. used to mint the correct number of ST.
+    * @param _eth The ammount of ETH being converted to ST value.
+    * @return The number of ST tokens to mint based on an ETH transactions value.
+    */
     function ETH_TO_ST(uint _eth) internal view returns (uint _ST) {
         uint mintValue = ETHGBP().mul(_eth.div(WAD));
         return mintValue;
     }
+    /**
+    * @notice calculates the ETH value of `_st` number of ST tokens.
+    * @param _st The ammount of ST tokens being converted to ETH value.
+    * @return The ETH value of `_st` ST Tokens.
+    */
     function ST_TO_ETH(uint _st) internal view returns (uint _ETH) {
         uint burnValue = _st.mul(WAD).div(ETHGBP());
         return burnValue;
     }
+    /**
+    * @notice Calculates the BT tokens value of an Ethereum transaction of value `_eth`.. used to mint the correct number of BT.
+    * @param _eth The ammount of ETH being converted to BT value.
+    * @return The number of BT tokens to mint based on an ETH transactions value.
+    */
     function ETH_TO_BT(uint _eth) internal view returns (uint _BT) {
         int buffer = getBufferValue();
         uint depositValue = ETHGBP().mul(_eth.div(WAD));
@@ -120,52 +143,62 @@ contract ST is ERC20, ERC20Detailed{
         }
         return depositValue.mul(WAD).div(btUnitPrice);
     }
+    /**
+    * @notice calculates the ETH value of `_bt` number of BT tokens.
+    * @param _bt The ammount of BT being converted to ETH value.
+    * @return The ETH value of `_bt` BT Tokens.
+    */
     function BT_TO_ETH(uint _bt) internal view returns (uint _ETH) {
-        int buffer = getBufferValue();
         uint btUnitPrice;
         if (bt.totalSupply() ==0 ){
             btUnitPrice = WAD;
         } else{
             //TODO: Change the way pricing determined if negative buffer.
-            btUnitPrice = buffer > 0 ? uint(buffer).mul(WAD).div(bt.totalSupply()) : WAD;
+            btUnitPrice = calcBT();
         }
         uint value = ((_bt * btUnitPrice))/ ETHGBP();
         return value;
     }
-
-    function newCollateralRatio(uint _burning) public view returns(uint _ratio){
-        uint ratio = totalSupply()  != _burning && totalSupply() != 0 ? (getVaultValue().sub(_burning)).mul(WAD).div(totalSupply() - _burning) : minimumCollateral;
+    /**
+    * @notice calculates the updated collateral ratio if _burning worth of value is burned from the vault..
+    * @return The theoretical collateral ratio
+    */
+    function newCollateralRatio(uint _burning) internal view returns(uint _ratio){
+        require(_burning <= totalSupply(), 'Burn value exceeds total supply');
+        uint ratio = totalSupply()  != _burning && totalSupply() != 0 ? (getVaultValue().sub(_burning)).mul(WAD).div(totalSupply() - _burning) : WAD*10;
         return (ratio);
     }  
-
-    function collateralRatio() public view returns (uint _ratio){
-        uint ratio = totalSupply() != 0 ? (getVaultValue().mul(WAD)).div(totalSupply()) : minimumCollateral;
+    /**
+    * @notice calculates the current collateral ratio 
+    * @return The current collateral ratio
+    */
+    function collateralRatio() internal view returns (uint _ratio){
+        uint ratio = totalSupply() != 0 ? (getVaultValue().mul(WAD)).div(totalSupply()) : WAD*10;
         return(ratio);
     }
-    //Oracilize safeParseInt function to parse string into uint
-    function safeParseInt(string memory _a, uint _b) internal pure returns (uint _parsedInt) {
-        bytes memory bresult = bytes(_a);
-        uint mintt = 0;
-        bool decimals = false;
-        for (uint i = 0; i < bresult.length; i++) {
-            if ((uint(uint8(bresult[i])) >= 48) && (uint(uint8(bresult[i])) <= 57)) {
-                if (decimals) {
-                   if (_b == 0) break;
-                    else _b--;
-                }
-                mintt *= 10;
-                mintt += uint(uint8(bresult[i])) - 48;
-            } else if (uint(uint8(bresult[i])) == 46) {
-                require(!decimals, 'More than one decimal encountered in string!');
-                decimals = true;
-            } else {
-                revert("Non-numeral character encountered in string!");
-            }
-        }
-        if (_b > 0) {
-            mintt *= 10 ** _b;
-        }
-        return mintt;
+    /**
+    * @notice calculates the unit price of a single BT token.
+    * @return the pricing of 1 BT token.
+    */
+    function calcBT() internal view returns (uint _price){
+        uint btUnitPrice = 0;
+        int buffer = getBufferValue();
+        uint minimumPrice = minPriceBT();
+        if(buffer == 0 || bt.totalSupply() == 0){
+            btUnitPrice = WAD;             
+        } else if (buffer > 0){
+            btUnitPrice = uint(buffer).mul(WAD).div(bt.totalSupply());
+        } 
+        btUnitPrice = btUnitPrice > minimumPrice ? btUnitPrice : minimumPrice;
+        return btUnitPrice;
     }
-
+    /**
+    * @notice calculates the lowest possible value of a BT token using the price of ETH when the collateral ratio was initially violated.
+    * @return The lowest possible pricing of a single BT token.
+    */
+    function minPriceBT() public view returns (uint _price){
+        //Min Price is calculated using the price that ETH would be when the collateral ratio is at minCollatRatio.
+        uint minPrice = bt.totalSupply() != 0 ? ((minCollatRatio.sub(WAD)).mul(totalSupply())).div(bt.totalSupply()): WAD;
+        return minPrice;
+    }
 }
