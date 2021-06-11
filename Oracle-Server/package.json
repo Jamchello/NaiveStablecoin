@@ -1,0 +1,26 @@
+{
+  "dependencies": {
+    "axios": "^0.21.1",
+    "eth-lightwallet": "^4.0.0",
+    "ethereumjs-tx": "^2.1.2",
+    "web3": "^1.3.5"
+  },
+  "name": "oracle-server",
+  "description": "NodeJS server which is responsible for updating the value of ETH in GBP (£) on my Ropsten Oracle contract. Makes use of the CoinGecko API to make this possible. ## Assumptions 1. Security is not of importance: private key kept in plaintext. 2. CoinGecko cannot be used to manipulate the price (single source of information is not a good idea!!) 3. Fetching the pricing data every 60 seconds is an acceptable frequency (of course within such a volatile market this would not be ideal in a production stage product)",
+  "version": "1.0.0",
+  "main": "app.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jamchello/Oracle.git"
+  },
+  "author": "Jamie Michel",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Jamchello/Oracle/issues"
+  },
+  "homepage": "https://github.com/Jamchello/Oracle#readme"
+}
