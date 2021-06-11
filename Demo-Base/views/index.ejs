@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>SimpleStable Demo</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Test</title>
+    <link rel="stylesheet" type="text/css" href="/css/style.css">
+    <link href='https://fonts.googleapis.com/css?family=Open+Sans:300' rel='stylesheet' type='text/css'>
+    <!-- Latest compiled and minified CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+    <!-- jQuery library -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="./js/web3.min.js"></script>
+    <script src="./js/connect.js"></script>
+  </head>
+  <div class="bg">
+  <body class="text-center" >
+    <div>
+      <h1>Demonstrating SimpleStable functionality</h1>
+      <b style="color: #e95e01; font-size: large;">Please make sure the MetaMask browser extension is installed so you can interract with your own Ethereum account!</b> <br>
+      WebApp which uses the Web3 API to interface with the SimpleStable smart contract - demonstrating how this type of stablecoin could be implemented.
+      <br>
+      <b>Owner Address:</b> 0x6969675Bdf697f64B13f3bCeB9a82bDe0E7BbbD9
+    </div>
+    <fieldset>
+      <h2>Transaction Information</h2>
+      <% if(balanceIs !== null){ %>
+        <p><%= balanceIs %></p>
+      <% } %>
+
+      <% if(info !== null){ %>
+        <p><%= info %></p>
+      <% } %>
+    </fieldset>
+    <div class="container-fluid">
+      <div class="row">
+      <fieldset class="col-sm-4">
+        <h2>Fetch Balance of address</h2>
+	      <form action="/balance" method="post">
+	        <input name="address" type="string" class="ghost-input" placeholder="Enter an address" required>
+          <input type="submit" class="ghost-button"value="Get balance of address">
+        </form>
+      </fieldset>
+
+      <fieldset class="col-sm-4">
+        <h2>Mint Tokens</h2>
+        <div>Only the "owner" address is able to call this function and mint new tokens into existance. In a fully functioning system this would be called by the back-end once successful payment of GBP has been processed (perhaps using a payment processor such as Skril).</div>
+        <form action="/mint" method="post">
+          <input name="address" type="string" class="ghost-input" placeholder="Enter an address" required>  
+          <input name="value" type="number" class="ghost-input" placeholder="Enter the value to mint" required>
+          <input type="submit" class="ghost-button card-footer" value="Mint Tokens">
+        </form>
+      </fieldset>
+
+      <fieldset class="col-sm-4">
+        <h2>Transfer Tokens</h2>
+        <div>Any address holding a balance of SIMP is able to transfer to any other address using this function of the token. This demonstration is only able to send from the "owner" address because the backend has access to the secret key. In a fully functioning implementation MetaMask could be used to inject the users wallet and facilitate transfers from their own balance.</div>
+        <form action="/send" method="post">
+          <input name="address" type="string" class="ghost-input" placeholder="Enter an address" required>
+          <input name="value" type="number" class="ghost-input" placeholder="Enter the value to send" required>
+          <input type="submit" class="ghost-button" value="Send tokens">
+        </form>
+      </fieldset>
+
+    </div>
+    <div class="row">
+      <fieldset class="col-sm-6">
+        <h2>Allow owner to burn tokens from balance (MetaMask Connected)</h2>
+        <div>Any Address holding a balance of SIMP is able allow the backend to burn their tokens. <b>MAKE SURE METAMASK BROWSER EXTENSION IS CONNECTED TO THE WEBSITE (TOP RIGHT)</b></div>
+        <form action="javascript:" onsubmit= "allowTokens('0x6969675Bdf697f64B13f3bCeB9a82bDe0E7BbbD9',document.getElementById('allowAmmt').value)">
+	        <input name="value" type="number" class="ghost-input" id = "allowAmmt" placeholder="Enter the value to allow" required>
+          <input type="submit" class="ghost-button" value="Allow Tokens">
+        </form>
+      </fieldset>
+
+      <fieldset class="col-sm-6">
+        <h2>Burn tokens</h2>
+        <div>The owner address is able to burn tokens from the "approved" balance granted to it by another address. Test this out by allowing tokens to be burned above!! In a fully functioning system the backend would burn from this allowance and then return collateral.</div>
+        <form action="/burn" method="post">
+            <input name="address" type="string" class="ghost-input" placeholder="Enter an address" required>  
+	          <input name="value" type="number" class="ghost-input" placeholder="Enter the value to burn" required>
+            <input type="submit" class="ghost-button" value="Burn Tokens">
+        </form>
+      </fieldset>
+    </div>
+
+    </div>
+  </body>
+</div>
+</html>
